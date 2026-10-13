@@ -1,0 +1,1 @@
+{"name":"engtempmail-github-pages","private":true,"type":"module","scripts":{"test":"node --test worker/worker.test.js"},"engines":{"node":">=22"}}

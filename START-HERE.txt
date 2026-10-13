@@ -1,0 +1,10 @@
+engTempmail — GitHub Pages website (extension na)
+
+Website: https://amitsami.github.io/engTempmail/
+Source code: https://github.com/amitsami/engTempmail
+Email API: https://engtempmail-api.haganubbra.workers.dev
+
+API URL site/config.js-e already set kora ache.
+GitHub main branch-e code push korle GitHub Actions website update korbe.
+Cloudflare Worker-er code update korte worker folder theke wrangler deploy koro.
+Bistarito configuration ar security info README.md-te ache.
