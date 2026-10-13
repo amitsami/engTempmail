@@ -1,32 +1,48 @@
-# engTempmail — GitHub Pages website
+# engTempmail
 
-**This is a website, not a browser extension.** The complete Mint/forest-green frontend is hosted on GitHub Pages. A small Cloudflare Worker calls temp.tf because temp.tf does not return CORS headers permitting direct browser requests from GitHub Pages (tested during development).
-
-## Live deployment
+A responsive Mint/forest-green temporary-email **website**, hosted on GitHub Pages. Not a browser extension.
 
 - Website: https://amitsami.github.io/engTempmail/
-- Source: https://github.com/amitsami/engTempmail
-- API proxy: https://engtempmail-api.haganubbra.workers.dev
-
-The API URL is already configured in `site/config.js`. The setup instructions below are for redeployment or moving the site to another account.
+- API gateway: https://engtempmail-api.haganubbra.workers.dev
+- Developer: [Email](mailto:amitsami110@gmail.com) · [GitHub](https://github.com/amitsami)
 
 ## Architecture
 
-Visitor → your GitHub Pages website → your Cloudflare Worker → temp.tf API.
+Browser → GitHub Pages frontend → Cloudflare API gateway → external email provider.
 
-GitHub Pages hosts every UI asset. The Worker hosts only the email API proxy; it does not host your frontend. No Node server, API key, extension, public third-party CORS relay or browser installation is needed. A Cloudflare account is required for the proxy.
+The email integration is retained. Its upstream URL is configured in the gateway runtime, not embedded in the public repository. GitHub Pages serves the frontend only; the Cloudflare Worker handles API requests and CORS.
 
-## Step 1 — deploy the API proxy
+## Features
 
-1. Sign in to Cloudflare and open **Workers & Pages**.
-2. Create a Worker named `engtempmail-api` (the dashboard labels may vary), then open its code editor.
-3. Replace the starter Worker code with the complete contents of **`worker/worker.js`** and deploy.
-4. Under the Worker’s settings, add a text environment variable:
-   - Name: `ALLOWED_ORIGIN`
-   - Value: `https://amitsami.github.io`
-   This must be your actual GitHub Pages **origin**, without the repository path and without a trailing slash. If your username differs, change it. Custom domains must use their custom origin.
-5. Deploy/save the updated variable. Copy the Worker’s HTTPS URL, such as `https://engtempmail-api.your-subdomain.workers.dev`.
-6. Open **`site/config.js`**, and put your real URL into `apiBase`:
+- Create, copy and recover temporary addresses; provider and syntax controls.
+- Full-width inbox, rich HTML emails with clickable buttons, safe links and attachments.
+- Opt-in 30-second auto refresh, paused when the tab is hidden; provider backoff respected.
+- Live availability counts and a **service-wide** received count, not a personal inbox count.
+- Lightweight press ripples, hover feedback, loading indicators, copy confirmation and non-layout-shifting notifications. Reduced-motion preferences disable decorative animation.
+- Responsive mobile layout and keyboard-visible focus.
+
+## Deploy the API gateway
+
+Use Node 22+ and Cloudflare Wrangler:
+
+```sh
+npm install --global wrangler
+wrangler login
+wrangler deploy --config worker/wrangler.toml
+```
+
+Before serving provider requests, configure these Worker runtime variables in Cloudflare **Settings → Variables and Secrets**:
+
+| Variable | Value |
+| --- | --- |
+| `ALLOWED_ORIGIN` | Your frontend origin, e.g. `https://amitsami.github.io` (no repository path or trailing slash). |
+| `EMAIL_PROVIDER_BASE` | The existing provider's HTTPS API base URL. Keep the current deployment value when updating. |
+
+The provider base must be HTTPS, without credentials, query parameters or a fragment. The gateway fails closed with HTTP 503 if the runtime value is absent or invalid. Set it before replacing a working deployment. Never commit private API credentials.
+
+For CLI deployments, supply the provider variable explicitly, or configure Wrangler to preserve existing dashboard variables. This repository deliberately does not hardcode it.
+
+Set the deployed gateway origin in `site/config.js`:
 
 ```js
 window.ENGTEMPMAIL_CONFIG = {
@@ -34,54 +50,37 @@ window.ENGTEMPMAIL_CONFIG = {
 };
 ```
 
-Do not add `/api` to that URL. This example is a placeholder, not a deployed endpoint. Never paste keys or passwords in config.js; it is public.
+Do not add `/api` to `apiBase`.
 
-Advanced CLI alternative: install Cloudflare’s Wrangler on your own computer, authenticate there, then run `wrangler deploy` from `worker/`. The included `wrangler.toml` supplies the default origin. The dashboard path above needs no CLI.
+## Deploy the website
 
-## Step 2 — host the actual website on GitHub Pages
+1. Push this repository to GitHub.
+2. Open **Settings → Pages → Source → GitHub Actions**.
+3. The included `.github/workflows/pages.yml` publishes `site/` on pushes to `main`.
+4. The workflow's deployment URL is your website URL. All asset paths are repository-relative.
 
-1. Create a repository called **engTempmail** on your GitHub account.
-2. Upload the contents of this project to the repository root: `site/`, `worker/`, `.github/`, README.md, package.json and .gitignore. **Do not upload only the ZIP.** Keep `.github/workflows/pages.yml` intact.
-3. Make sure the default branch is **main** (or edit the workflow’s branch name).
-4. Repository → **Settings → Pages → Source → GitHub Actions**.
-5. Repository → **Actions → Deploy engTempmail to GitHub Pages → Run workflow** (or push a commit). When it finishes, Pages settings shows the website URL.
-6. For username `amitsami` and repo `engTempmail`, the normal address is `https://amitsami.github.io/engTempmail/`. This is the expected route, not a site already deployed for you.
+## API contract
 
-The workflow publishes only `site/`, so Worker source and test files are not uploaded into the website artifact. Every asset uses relative paths to work beneath the GitHub repository URL.
+The gateway uses the existing provider contract: account and stats GET endpoints, a check POST endpoint accepting `{ "email": "..." }`, and attachment downloads. Inbox responses contain `data` arrays; rich messages use `bodyContentType: "html"` and `body`.
 
-**Simpler upload alternative:** upload only the contents of `site/` directly into your repository root, then choose Pages → Deploy from a branch → main → root. Deploy the Worker separately as in Step 1. In this alternative there is no need for the GitHub Actions workflow.
+Only supported routes and parameters are forwarded. It is not an open proxy. The gateway validates addresses, restricts browser origins, limits requests conservatively per runtime isolate, and forwards upstream retry instructions. CORS is not authentication or a global abuse-prevention system.
 
-## What works after those two setup steps
+## Safety and limitations
 
-- Temporary address generation and copying.
-- Dot/Plus syntaxes and documented Gmail/Outlook/Hotmail provider filters. All providers may also return high.edu.pl; no undocumented high.edu.pl filter is invented.
-- Recover an address accepted by temp.tf and read its inbox.
-- Styled, clickable HTML email rendering and plain-text link detection; attachment downloads up to 20 MB.
-- Live availability totals including high.edu.pl when returned by the API.
-- Clickable email icon (`mailto:amitsami110@gmail.com`) and GitHub icon (`https://github.com/amitsami`). Email opens the visitor’s configured mail client; it does not send a message automatically.
-- Mobile-friendly layout with accessible keyboard controls.
+- No frontend mail-count cap is imposed, but **unlimited delivery, storage or availability is not guaranteed**. Provider quotas, expiry and fair-use policies apply.
+- HTML is sanitized with bundled DOMPurify before rendering in an isolated sandbox. Email scripts, forms, event handlers and unsafe URL schemes are blocked. Safe links open separately.
+- Remote images are blocked until requested because they can track readers. Safe raster inline/CID images are supported.
+- Disposable inboxes are not private, permanent mailboxes. Avoid banking, sensitive accounts and permanent account recovery.
+- Generated addresses and API success do not guarantee that a sender will deliver an email.
 
-## Honest setup state
+## Tests
 
-The live Worker endpoint is set in `site/config.js`. If you remove that URL or copy this project to another account without reconfiguring it, the site shows a setup notice instead of fake live totals.
+```sh
+npm test
+```
 
-The engTempmail repository and Cloudflare Worker have been created. GitHub Pages deploys this site from the included workflow.
+Worker tests cover CORS, route/input validation, runtime provider configuration, large-number precision, backoff and attachment headers. Browser QA should also cover mobile overflow, clipboard feedback, keyboard focus, reduced motion and real email-button rendering after deployment.
 
-## Safety and limits
+## Third-party license
 
-- temp.tf permits developer API use and documents 60 requests/minute/IP: https://temp.tf/document and https://temp.tf/terms.
-- Manual refresh plus optional 30-second auto refresh (paused in background tabs). Stats cache for 60 seconds at the Cloudflare edge. The Worker limits requests per isolate and honours upstream Retry-After. Isolate counters are **not** a distributed rate limit; a busy production site should add Cloudflare rate limiting/abuse protection. Cloudflare’s quotas and billing depend on your plan.
-- CORS is restricted to your site origin, but CORS is not authentication and does not stop non-browser clients. Do not use this as an authenticated/private API.
-- Never use disposable inboxes for banking, identity, sensitive accounts or permanent account recovery. Service availability depends on temp.tf.
-- Browser stores the current address only in sessionStorage. App does not persist inbox bodies. Upstream/hosting services may keep their own logs.
-- Email HTML is sanitized with bundled DOMPurify 3.4.17. Sender scripts, event handlers, forms and unsafe URL schemes are removed; links, table layout and styles are preserved. It renders in a restrictive opaque-origin iframe. Only a nonce-authorized, app-owned height-sizing bridge runs; sender scripts cannot run. HTTP(S)/mailto links open in a separate tab with noopener/noreferrer. Inline raster CID images load from the API. Remote images require an explicit Load images click to avoid silent tracking, and safe embedded raster images are supported. Attachments may still contain unsafe files.
-
-## Checks
-
-Run `node --test worker/worker.test.js` on Node 22+. Tests cover CORS, validation, fixed upstream, large-number precision, backoff and attachment headers. Browser layout/interaction tests and actual temp.tf requests were checked during development. Incoming email delivery is not guaranteed merely by API success.
-
-## Email rendering fix
-
-The renderer now preserves sender CTA/login buttons and email formatting instead of stripping links and styles. Inbox refresh preserves the selected message, avoids rebuilding unchanged emails, and restores a saved address on reload. All messages returned by the API are displayed; there is no fixed mail-count cap added by this frontend. This is not a guarantee of unlimited delivery, permanent aliases or unlimited API access. Provider availability, retention, quotas and fair-use limits still apply.
-
-DOMPurify license: `site/vendor/DOMPurify-LICENSE.txt`.
+DOMPurify's license is retained at `site/vendor/DOMPurify-LICENSE.txt`. Do not remove third-party software notices.

@@ -1,9 +1,9 @@
-// GitHub Pages frontend -> this Worker -> the fixed temp.tf public API.
-const UPSTREAM='https://temp.tf/api';
+// GitHub Pages frontend -> this Worker -> a runtime-configured email provider.
 let requestTimes=[],backoffUntil=0;
 const validEmail=e=>typeof e==='string'&&e.length<=254&&/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(e);
 class ErrorResponse extends Error{constructor(status,message,retry){super(message);this.status=status;this.retry=retry;}}
 function options(url){const q=new URLSearchParams(),dot=url.searchParams.get('dot')==='1',plus=url.searchParams.get('plus')==='1';if(!dot&&!plus)throw new ErrorResponse(400,'Select Dot or Plus.');q.set('dot',dot?'1':'0');q.set('plus',plus?'1':'0');const p=url.searchParams.get('providers');if(p){if(!['gmail','outlook','hotmail'].includes(p))throw new ErrorResponse(400,'Unsupported provider.');if(dot&&!plus&&p!=='gmail')throw new ErrorResponse(400,'Dot-only addresses require Gmail.');q.set('providers',p);}else if(dot&&!plus)q.set('providers','gmail');return q.toString();}
+function providerBase(env){try{const url=new URL(env.EMAIL_PROVIDER_BASE);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw Error();return url.href.replace(/\/+$/,'');}catch{throw new ErrorResponse(503,'Email provider runtime configuration is missing or invalid.');}}
 export function resetLimiter(){requestTimes=[];backoffUntil=0;}
 export default {async fetch(request,env={},ctx){
  const allowed=env.ALLOWED_ORIGIN||'https://amitsami.github.io';const origin=request.headers.get('Origin');
@@ -24,7 +24,7 @@ export default {async fetch(request,env={},ctx){
    const email=u.searchParams.get('email'),messageId=u.searchParams.get('messageId'),attachmentId=u.searchParams.get('attachmentId');if(!validEmail(email)||!messageId||!attachmentId||messageId.length>4096||attachmentId.length>4096)throw new ErrorResponse(400,'Invalid attachment request.');endpoint='/attachment?'+new URLSearchParams({email,messageId,attachmentId});filename=(u.searchParams.get('name')||'attachment').replace(/[\r\n/\\]/g,'_').slice(0,180);
   }else throw new ErrorResponse(404,'Route not found.');
   // Cache only public aggregate stats, never emails or inboxes.
-  const cache=stats&&globalThis.caches?.default;const cacheKey=new Request(UPSTREAM+endpoint);
+  const UPSTREAM=providerBase(env);const cache=stats&&globalThis.caches?.default;const cacheKey=new Request(UPSTREAM+endpoint);
   if(cache){const cached=await cache.match(cacheKey);if(cached)return json(200,await cached.json());}
   const t=Date.now();if(t<backoffUntil)throw new ErrorResponse(429,'The provider is busy. Please wait.',Math.ceil((backoffUntil-t)/1000));
   requestTimes=requestTimes.filter(x=>x>t-60000);if(requestTimes.length>=50)throw new ErrorResponse(429,'Please wait before retrying.',60);requestTimes.push(t);

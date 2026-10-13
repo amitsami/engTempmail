@@ -2,13 +2,20 @@
 const $=id=>document.getElementById(id);
 const API_BASE=String(window.ENGTEMPMAIL_CONFIG?.apiBase||'').trim().replace(/\/+$/,'');
 function apiUrl(route){if(!API_BASE||!/^https:\/\//.test(API_BASE))throw Error('Email service setup is required. Add your Cloudflare Worker HTTPS URL to site/config.js.');return API_BASE+route;}
-let email='',messages=[],busy=false,statsRun=0,selectedKey='',selectedSignature='',renderRun=0,cooldownUntil=0,autoTimer;
+let email='',messages=[],busy=false,activeAction='fetchInbox',statsRun=0,selectedKey='',selectedSignature='',renderRun=0,cooldownUntil=0,autoTimer;
 const imagePermissions=new Set(),imageCache=new Map();
 try{email=sessionStorage.getItem('engtempmail.address')||'';$('autoRefresh').checked=sessionStorage.getItem('engtempmail.autoRefresh')==='yes';}catch{}
-function notice(text,success=false){$('notice').textContent=text;$('notice').hidden=!text;$('notice').classList.toggle('success',success);}
+let noticeTimer,noticeHideTimer,copyTimer;
+function notice(text,success=false){
+ clearTimeout(noticeTimer);clearTimeout(noticeHideTimer);const box=$('notice');
+ if(!text){box.classList.remove('is-visible');noticeHideTimer=setTimeout(()=>{box.hidden=true;},matchMedia('(prefers-reduced-motion: reduce)').matches?0:180);return;}
+ $('noticeText').textContent=text;box.classList.toggle('success',success);box.hidden=false;requestAnimationFrame(()=>box.classList.add('is-visible'));if(success)noticeTimer=setTimeout(()=>notice(''),3600);
+}
+$('dismissNotice').addEventListener('click',()=>notice(''));
 function sync(){
  $('email').textContent=email||'Create your first address';$('copy').disabled=!email||busy;$('fetchInbox').disabled=!email||busy;$('newAddress').disabled=busy;$('recoverButton').disabled=busy;
- $('fetchInbox').classList.toggle('pending',busy);$('fetchInbox').setAttribute('aria-busy',String(busy));$('statusText').textContent=busy?'Checking…':email?'Address ready':'Ready when you are';
+ for(const [id,label,working] of [['fetchInbox','Fetch inbox','Checking…'],['newAddress','+ New address','Creating…'],['recoverButton','Recover address','Opening…']]){const el=$(id),pending=busy&&activeAction===id;el.classList.toggle('pending',pending);el.setAttribute('aria-busy',String(pending));el.querySelector('.button-text').textContent=pending?working:label;}
+ document.querySelector('.mail').classList.toggle('is-loading',busy&&activeAction==='fetchInbox');$('statusText').textContent=busy?'Working…':email?'Address ready':'Ready when you are';
 }
 function remember(value){email=value;try{sessionStorage.setItem('engtempmail.address',value);}catch{}sync();}
 async function api(route,options={}){
@@ -19,14 +26,14 @@ async function api(route,options={}){
 }
 function params(){const q=new URLSearchParams({dot:$('dotSyntax').checked?'1':'0',plus:$('plusSyntax').checked?'1':'0'});if(!$('dotSyntax').checked&&!$('plusSyntax').checked)throw Error('Select at least one syntax: Dot or Plus.');if($('provider').value)q.set('providers',$('provider').value);return q.toString();}
 function scheduleAuto(){clearTimeout(autoTimer);if(!$('autoRefresh').checked||!email||document.hidden)return;autoTimer=setTimeout(()=>run(()=>checkAddress(email),true),Math.max(30000,cooldownUntil-Date.now()+1000));}
-async function run(fn,silent=false){if(busy)return;busy=true;if(!silent)notice('');sync();try{await fn();}catch(e){notice(e.message||'Connection failed. Please try again.');}finally{busy=false;sync();scheduleAuto();}}
+async function run(fn,silent=false,action='fetchInbox'){if(busy)return;busy=true;activeAction=action;if(!silent)notice('');sync();try{await fn();}catch(e){notice(e.message||'Connection failed. Please try again.');}finally{busy=false;sync();scheduleAuto();}}
 function empty(node,title,subtitle){node.replaceChildren();const div=document.createElement('div');div.className='empty';const strong=document.createElement('strong');strong.textContent=title;const p=document.createElement('p');p.textContent=subtitle;div.append(strong,p);node.append(div);}
 function sender(msg){return typeof msg.from==='string'?msg.from:'Unknown sender';}
 function messageKey(msg,index){return String(msg.id||`${msg.date||''}:${msg.subject||''}:${index}`);}
 function clearImages(){for(const value of imageCache.values())if(value.url?.startsWith('blob:'))URL.revokeObjectURL(value.url);imageCache.clear();imagePermissions.clear();selectedKey='';selectedSignature='';renderRun++;}
 function markSelection(index){document.querySelectorAll('.row').forEach(row=>{const active=Number(row.dataset.index)===index;row.classList.toggle('active',active);row.setAttribute('aria-pressed',String(active));});}
 function renderList(){
- $('messageCount').textContent=`${messages.length} message${messages.length===1?'':'s'}`;
+ const counter=$('messageCount'),newCount=`${messages.length} message${messages.length===1?'':'s'}`;if(counter.textContent!==newCount)window.engMotion?.count(counter);counter.textContent=newCount;
  if(!messages.length){selectedKey='';selectedSignature='';renderRun++;empty($('messageList'),'No messages yet','Use Fetch inbox to check for new mail.');empty($('messagePreview'),'A quieter kind of inbox.','Select a message to read it here.');return;}
  const fragment=document.createDocumentFragment();
  messages.forEach((m,index)=>{
@@ -95,7 +102,7 @@ function showMessage(index){
  if(selectedKey===key&&selectedSignature===signature)return;
  selectedKey=key;selectedSignature=signature;const ticket=++renderRun;
  const article=$('messagePreview');article.replaceChildren();const h=document.createElement('h3');h.textContent=msg.subject||'(No subject)';const from=document.createElement('div');from.className='from';const date=new Date(msg.date);from.textContent=`From: ${sender(msg)}${Number.isNaN(date.getTime())?'':' · '+date.toLocaleString()}`;
- const body=document.createElement('div');body.className='message';article.append(h,from,body);
+ const body=document.createElement('div');body.className='message';article.append(h,from,body);window.engMotion?.open(article);
  if(msg.bodyContentType==='html'){body.classList.add('html-message');mountEmail(msg,index,body,ticket,loadRemote).catch(e=>{if(ticket===renderRun)body.textContent=e.message;});}
  else {
   const text=String(msg.body||'No message content.');const matches=text.matchAll(/https?:\/\/[^\s<>]+/g);let last=0;
@@ -108,10 +115,10 @@ async function checkAddress(address){
  const data=await api('/api/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:address})});if(!Array.isArray(data.data))throw Error('The provider returned an invalid inbox.');
  const changed=address!==email||JSON.stringify(data.data)!==JSON.stringify(messages);if(address!==email)clearImages();remember(address);messages=data.data;if(changed)renderList();$('updated').textContent='Checked '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 }
-$('newAddress').addEventListener('click',()=>run(async()=>{const data=await api('/api/account?'+params());if(typeof data.email!=='string'||!data.email.includes('@'))throw Error('The provider did not return an address.');clearImages();remember(data.email);messages=[];renderList();$('updated').textContent='Not checked yet';notice('Your address is ready. Copy it, then fetch your inbox or enable auto refresh.',true);}));
+$('newAddress').addEventListener('click',()=>run(async()=>{const data=await api('/api/account?'+params());if(typeof data.email!=='string'||!data.email.includes('@'))throw Error('The provider did not return an address.');clearImages();remember(data.email);messages=[];renderList();$('updated').textContent='Not checked yet';notice('Your address is ready. Copy it, then fetch your inbox or enable auto refresh.',true);},false,'newAddress'));
 $('fetchInbox').addEventListener('click',()=>run(()=>checkAddress(email)));
-$('recoverForm').addEventListener('submit',event=>{event.preventDefault();const address=$('recoverEmail').value.trim();run(async()=>{await checkAddress(address);notice('Address recovered and inbox loaded.',true);$('recoverEmail').value='';});});
-$('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(email);notice('Email address copied.',true);}catch{notice('Could not copy automatically. Select and copy the address above.');}});
+$('recoverForm').addEventListener('submit',event=>{event.preventDefault();const address=$('recoverEmail').value.trim();run(async()=>{await checkAddress(address);notice('Address recovered and inbox loaded.',true);$('recoverEmail').value='';},false,'recoverButton');});
+$('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(email);const button=$('copy');clearTimeout(copyTimer);button.querySelector('span').textContent='Copied';button.classList.add('is-copied');window.engMotion?.copied(button);copyTimer=setTimeout(()=>{button.querySelector('span').textContent='Copy';button.classList.remove('is-copied');},1800);notice('Email address copied.',true);}catch{notice('Could not copy automatically. Select and copy the address above.');}});
 $('autoRefresh').addEventListener('change',()=>{try{sessionStorage.setItem('engtempmail.autoRefresh',$('autoRefresh').checked?'yes':'no');}catch{}scheduleAuto();});
 document.addEventListener('visibilitychange',scheduleAuto);
 function displayCount(id,formatted,raw){$(id).textContent=typeof formatted==='string'?formatted:raw!=null?String(raw):'Unavailable';}
