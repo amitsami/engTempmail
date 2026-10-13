@@ -56,7 +56,7 @@ The workflow publishes only `site/`, so Worker source and test files are not upl
 - Temporary address generation and copying.
 - Dot/Plus syntaxes and documented Gmail/Outlook/Hotmail provider filters. All providers may also return high.edu.pl; no undocumented high.edu.pl filter is invented.
 - Recover an address accepted by temp.tf and read its inbox.
-- Safe limited HTML/plain-text email display and attachment downloads up to 20 MB.
+- Styled, clickable HTML email rendering and plain-text link detection; attachment downloads up to 20 MB.
 - Live availability totals including high.edu.pl when returned by the API.
 - Clickable email icon (`mailto:amitsami110@gmail.com`) and GitHub icon (`https://github.com/amitsami`). Email opens the visitor’s configured mail client; it does not send a message automatically.
 - Mobile-friendly layout with accessible keyboard controls.
@@ -70,12 +70,18 @@ The engTempmail repository and Cloudflare Worker have been created. GitHub Pages
 ## Safety and limits
 
 - temp.tf permits developer API use and documents 60 requests/minute/IP: https://temp.tf/document and https://temp.tf/terms.
-- Manual refresh only. Stats cache for 60 seconds at the Cloudflare edge. The Worker limits requests per isolate and honours upstream Retry-After. Isolate counters are **not** a distributed rate limit; a busy production site should add Cloudflare rate limiting/abuse protection. Cloudflare’s quotas and billing depend on your plan.
+- Manual refresh plus optional 30-second auto refresh (paused in background tabs). Stats cache for 60 seconds at the Cloudflare edge. The Worker limits requests per isolate and honours upstream Retry-After. Isolate counters are **not** a distributed rate limit; a busy production site should add Cloudflare rate limiting/abuse protection. Cloudflare’s quotas and billing depend on your plan.
 - CORS is restricted to your site origin, but CORS is not authentication and does not stop non-browser clients. Do not use this as an authenticated/private API.
 - Never use disposable inboxes for banking, identity, sensitive accounts or permanent account recovery. Service availability depends on temp.tf.
 - Browser stores the current address only in sessionStorage. App does not persist inbox bodies. Upstream/hosting services may keep their own logs.
-- Email HTML is reduced to safe elements, with scripts, links, images and forms removed, and rendered in a restrictive sandbox. Attachments may still contain unsafe files.
+- Email HTML is sanitized with bundled DOMPurify 3.4.17. Sender scripts, event handlers, forms and unsafe URL schemes are removed; links, table layout and styles are preserved. It renders in a restrictive opaque-origin iframe. Only a nonce-authorized, app-owned height-sizing bridge runs; sender scripts cannot run. HTTP(S)/mailto links open in a separate tab with noopener/noreferrer. Inline raster CID images load from the API. Remote images require an explicit Load images click to avoid silent tracking, and safe embedded raster images are supported. Attachments may still contain unsafe files.
 
 ## Checks
 
 Run `node --test worker/worker.test.js` on Node 22+. Tests cover CORS, validation, fixed upstream, large-number precision, backoff and attachment headers. Browser layout/interaction tests and actual temp.tf requests were checked during development. Incoming email delivery is not guaranteed merely by API success.
+
+## Email rendering fix
+
+The renderer now preserves sender CTA/login buttons and email formatting instead of stripping links and styles. Inbox refresh preserves the selected message, avoids rebuilding unchanged emails, and restores a saved address on reload. All messages returned by the API are displayed; there is no fixed mail-count cap added by this frontend. This is not a guarantee of unlimited delivery, permanent aliases or unlimited API access. Provider availability, retention, quotas and fair-use limits still apply.
+
+DOMPurify license: `site/vendor/DOMPurify-LICENSE.txt`.
